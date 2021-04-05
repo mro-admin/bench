@@ -29,9 +29,10 @@ def setup_letsencrypt(site, custom_domain, bench_path, interactive):
 			print("No custom domain named {0} set for site".format(custom_domain))
 			return
 
-	click.confirm('Running this will stop the nginx service temporarily causing your sites to go offline\n'
-		'Do you want to continue?',
-		abort=True)
+	if interactive:
+		click.confirm('Running this will stop the nginx service temporarily causing your sites to go offline\n'
+			'Do you want to continue?',
+			abort=True)
 
 	if not get_config(bench_path).get("dns_multitenant"):
 		print("You cannot setup SSL without DNS Multitenancy")
@@ -82,12 +83,17 @@ def run_certbot_and_setup_ssl(site, custom_domain, bench_path, interactive=True)
 
 def setup_crontab():
 	job_command = '/opt/certbot-auto renew -a nginx --post-hook "systemctl reload nginx"'
-	system_crontab = CronTab(tabfile='/etc/crontab', user=True)
-	if job_command not in str(system_crontab):
-		job  = system_crontab.new(command=job_command, comment="Renew lets-encrypt every month")
-		job.every().month()
-		job.enable()
-		system_crontab.write()
+	job_comment = 'Renew lets-encrypt every month'
+	print("Setting Up cron job to {0}".format(job_comment))
+
+	system_crontab = CronTab(user='root')
+
+	for job in system_crontab.find_comment(comment=job_comment): # Removes older entries
+		system_crontab.remove(job)
+
+	job = system_crontab.new(command=job_command, comment=job_comment)
+	job.setall('0 0 */1 * *') # Run at 00:00 every day-of-month
+	system_crontab.write()
 
 
 def create_dir_if_missing(path):
@@ -109,9 +115,12 @@ def get_certbot_path():
 
 
 def renew_certs():
+	# Needs to be run with sudo
 	click.confirm('Running this will stop the nginx service temporarily causing your sites to go offline\n'
 		'Do you want to continue?',
 		abort=True)
+
+	setup_crontab()
 
 	service('nginx', 'stop')
 	exec_cmd("{path} renew".format(path=get_certbot_path()))
@@ -171,4 +180,3 @@ def setup_wildcard_ssl(domain, email, bench_path, exclude_base_domain):
 	make_nginx_conf(bench_path)
 	print("Restrting Nginx service")
 	service('nginx', 'restart')
-
